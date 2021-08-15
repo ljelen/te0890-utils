@@ -15,6 +15,7 @@ package rvsys is
     constant rvsys_addr_leds:    rvsys_addr_type := x"f0000000";
     constant rvsys_addr_gpio1:   rvsys_addr_type := x"f0001000";
     constant rvsys_addr_gpio2:   rvsys_addr_type := x"f0002000";
+    constant rvsys_addr_spimem:  rvsys_addr_type := x"f0004000";
     constant rvsys_addr_timer:   rvsys_addr_type := x"f0008000";
     constant rvsys_addr_uart:    rvsys_addr_type := x"f0010000";
 

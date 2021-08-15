@@ -37,6 +37,9 @@ entity riscv_test_top is
         port_f:         inout std_logic_vector(7 downto 0);
         port_g:         inout std_logic_vector(7 downto 0);
         port_h:         inout std_logic_vector(7 downto 0);
+        spi_cs_l:       out   std_logic;
+        spi_mosi:       out   std_logic;
+        spi_miso:       in    std_logic;
         hr_cs_l:        out   std_logic;
         hr_rst_l:       out   std_logic );
 end entity;
@@ -82,8 +85,8 @@ architecture arch_top of riscv_test_top is
     signal r_sysbus_bram_rsp_valid: std_logic;
     signal s_sysbus_slv_input:      bus_slv_input_array(0 to 1);
     signal s_sysbus_slv_output:     bus_slv_output_array(0 to 1);
-    signal s_devbus_slv_input:      bus_slv_input_array(0 to 4);
-    signal s_devbus_slv_output:     bus_slv_output_array(0 to 4);
+    signal s_devbus_slv_input:      bus_slv_input_array(0 to 5);
+    signal s_devbus_slv_output:     bus_slv_output_array(0 to 5);
 
     signal s_gpio_led_o:            std_logic_vector(31 downto 0);
     signal s_gpio1_i:               std_logic_vector(31 downto 0);
@@ -97,6 +100,11 @@ architecture arch_top of riscv_test_top is
     signal s_uart_rx:               std_logic;
     signal s_uart_interrupt:        std_logic;
     signal s_timer_interrupt:       std_logic;
+
+    signal s_spi_clk:               std_logic;
+    signal s_spi_cs:                std_logic;
+    signal s_spi_mosi:              std_logic;
+    signal s_spi_miso:              std_logic;
 
     signal s_jtag_drck:             std_logic;
     signal s_jtag_capture:          std_logic;
@@ -168,6 +176,34 @@ begin
         inst_iobuf_gpio_h: IOBUF
             port map ( I => s_gpio2_o(i+24), T => s_gpio2_t(i+24), O => s_gpio2_i(i+24), IO => port_h(i) );
     end generate;
+
+    -- SPI clock is connected to the CCLK pin.
+    -- This pin is not directly accessible as a user I/O, only via STARTUPE2.
+    -- Note: the first 3 clock cycles on USRCCLKO will not be passed through to CCLK.
+    inst_startupe2: STARTUPE2
+        port map (
+            CFGCLK      => open,
+            CFGMCLK     => open,
+            CLK         => '0',
+            EOS         => open,
+            GSR         => '0',
+            GTS         => '0',
+            KEYCLEARB   => '1',
+            PACK        => '0',
+            PREQ        => open,
+            USRCCLKO    => s_spi_clk,
+            USRCCLKTS   => '0',
+            USRDONEO    => '1',
+            USRDONETS   => '0' );
+
+    inst_obuf_spics: OBUF
+        port map ( I => s_spi_cs, O => spi_cs_l );
+
+    inst_obuf_spimosi: OBUF
+        port map ( I => s_spi_mosi, O => spi_mosi );
+
+    inst_ibuf_spimiso: IBUF
+        port map ( I => spi_miso, O => s_spi_miso );
 
     inst_obuf_csn: OBUF
         port map ( I => '1', O => hr_cs_l );
@@ -310,13 +346,14 @@ begin
     --   0xf0000000 = GPIO controller for on-board LEDs
     --   0xf0001000 = GPIO controller for pins A..D
     --   0xf0002000 = GPIO controller for pins E..F
+    --   0xf0004000 = SPI flash controller
     --   0xf0008000 = Timer controller
     --   0xf0010000 = UART controller
     --
 
     inst_devbus_ctrl: entity work.bus_ctrl
         generic map (
-            num_slaves    => 5,
+            num_slaves    => 6,
             slv_info      => ( 0 => ( addr_start => rvsys_addr_leds,
                                       addr_size  => x"00001000" ),
                                1 => ( addr_start => rvsys_addr_gpio1,
@@ -326,6 +363,8 @@ begin
                                3 => ( addr_start => rvsys_addr_uart,
                                       addr_size  => x"00001000" ),
                                4 => ( addr_start => rvsys_addr_timer,
+                                      addr_size  => x"00001000" ),
+                               5 => ( addr_start => rvsys_addr_spimem,
                                       addr_size  => x"00001000" )),
             pipeline_cmd  => true,
             pipeline_rsp  => true )
@@ -404,6 +443,24 @@ begin
             interrupt     => s_timer_interrupt,
             slv_input     => s_devbus_slv_input(4),
             slv_output    => s_devbus_slv_output(4));
+
+    --
+    -- SPI flash.
+    --
+
+    inst_spiflash: entity work.spiflash
+        generic map (
+            clk_half_period => 2,   -- 25 MHz SPI clock
+            deselect_time   => 5 )  -- 50 ns minimum deselect
+        port map (
+            clk           => clk_main,
+            rst           => r_sys_reset,
+            spi_clk       => s_spi_clk,
+            spi_cs        => s_spi_cs,
+            spi_mosi      => s_spi_mosi,
+            spi_miso      => s_spi_miso,
+            slv_input     => s_devbus_slv_input(5),
+            slv_output    => s_devbus_slv_output(5));
 
     --
     -- JTAG debug bridge.
