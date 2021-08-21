@@ -51,13 +51,15 @@ RVLIB_HDRS = rvlib_std.h \
              rvlib_interrupt.h \
              rvlib_time.h \
              rvlib_gpio.h \
-             rvlib_uart.h
+             rvlib_uart.h \
+             rvlib_spiflash.h
 
 RVLIB_OBJS = rvlib_startup.o \
              rvlib_std.o \
              rvlib_time.o \
              rvlib_gpio.o \
-             rvlib_uart.o
+             rvlib_uart.o \
+             rvlib_spiflash.o
 
 # Build the library in freestanding mode.
 $(RVLIB_OBJS): ccmode = freestanding
@@ -67,6 +69,7 @@ rvlib_std.o: rvlib_std.c rvlib_std.h
 rvlib_time.o: rvlib_time.c rvlib_time.h rvlib_hardware.h
 rvlib_uart.o: rvlib_uart.c rvlib_uart.h rvlib_hardware.h
 rvlib_gpio.o: rvlib_gpio.c rvlib_gpio.h rvlib_hardware.h
+rvlib_spiflash.o: rvlib_spiflash.c rvlib_spiflash.h rvlib_time.h rvlib_hardware.h
 
 
 #

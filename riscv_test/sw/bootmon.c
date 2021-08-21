@@ -25,6 +25,7 @@
 #include "rvlib_time.h"
 #include "rvlib_gpio.h"
 #include "rvlib_uart.h"
+#include "rvlib_spiflash.h"
 
 
 /* Hexboot helper function (written in assembler). */
@@ -49,7 +50,7 @@ static void print_str(const char *msg)
 /*
  * Print an unsigned integer to the console as a decimal number.
  */
-/*static*/ void print_uint(unsigned int val)
+static void print_uint(unsigned int val)
 {
     char *p = scratchbuf + sizeof(scratchbuf) - 1;
     *p = '\0';
@@ -59,6 +60,23 @@ static void print_str(const char *msg)
         val /= 10;
     } while (val != 0);
     print_str(p);
+}
+
+
+/*
+ * Print an unsigned integer to the console as a hexadecimal number.
+ */
+static void print_uint_hex(unsigned int val, unsigned int width)
+{
+    static const char hexdigits[16] = "0123456789abcdef";
+    while (width < 8 && (val >> (width << 2)) > 0) {
+        width++;
+    }
+    while (width > 0) {
+        width--;
+        unsigned int d = (val >> (width << 2)) & 0xf;
+        rvlib_putchar(hexdigits[d]);
+    }
 }
 
 
@@ -83,6 +101,62 @@ static void print_endln(void)
 {
     rvlib_putchar('\r');
     rvlib_putchar('\n');
+}
+
+
+/* Parse decimal or hexadecimal number. */
+static int parse_uint(const char *s, uint32_t *val)
+{
+    uint32_t v = 0;
+    int good = 0;
+    size_t p = 0;
+
+    while (s[p] == ' ') {
+        p++;
+    }
+
+    if (s[p] == '0' && (s[p + 1] == 'x' || s[p + 1] == 'X')) {
+        p += 2;
+        while (1) {
+            char c = s[p];
+            uint32_t d;
+            if (c >= '0' && c <= '9') {
+                d = s[p] - '0';
+            } else if (c >= 'a' && c <= 'f') {
+                d = c - 'a' + 10;
+            } else if (c >= 'A' && c <= 'F') {
+                d = c - 'A' + 10;
+            } else {
+                break;
+            }
+            if (v > UINT32_MAX / 16) {
+                return -1;
+            }
+            v = (v << 4) + d;
+            good = 1;
+            p++;
+        }
+    } else {
+        while (1) {
+            char c = s[p];
+            if (c < '0' || c > '9') {
+                break;
+            }
+            if (v > UINT32_MAX / 10) {
+                return -1;
+            }
+            v = 10 * v  + c - '0';
+            good = 1;
+            p++;
+        }
+    }
+
+    if (good) {
+        *val = v;
+        return p;
+    } else {
+        return -1;
+    }
 }
 
 
@@ -458,6 +532,199 @@ static int set_gpio_subcommand(const char *cmdbuf)
     return 1;
 }
 
+
+/* Read SPI flash device ID. */
+static void spiflash_readid(void)
+{
+    struct rvlib_spiflash_device_id devid;
+
+    print_str("SPI flash identification:\r\n");
+
+    rvlib_spiflash_init();
+    rvlib_spiflash_read_id(&devid);
+
+    print_str("  manufacturer ID = 0x");
+    print_uint_hex(devid.manufacturer_id, 2);
+    print_endln();
+    print_str("  device ID       = 0x");
+    print_uint_hex(devid.device_id, 4);
+    print_endln();
+}
+
+
+/* Test program/erase functions. */
+static void spiflash_writetest(void)
+{
+    const uint32_t page_size = 256;
+    const uint32_t sector_size = 64 * 1024;
+    const uint32_t flash_size = 8 * 1024 * 1024;
+    unsigned char buf[32];
+
+    print_str("Test SPI flash program/erase functions:\r\n");
+
+    rvlib_spiflash_init();
+
+    /* Erase the last sector of the memory. */
+    uint32_t sector_addr = flash_size - sector_size;
+    print_str("  Erasing sector at 0x");
+    print_uint_hex(sector_addr, 6);
+    print_str(" ... ");
+
+    int status = rvlib_spiflash_sector_erase(sector_addr);
+    if (status < 0) {
+        print_str("ERROR code -");
+        print_uint(-status);
+        print_endln();
+    } else {
+        print_str("OK\r\n");
+    }
+
+    /* Read back to check that the sector was erased. */
+    print_str("  Read back erased sector ... ");
+    int good = 1;
+    for (unsigned int p = 0; p + sizeof(buf) <= sector_size; p += sizeof(buf)) {
+        rvlib_spiflash_read_mem(sector_addr + p, buf, sizeof(buf));
+        for (unsigned int i = 0; i < sizeof(buf); i++) {
+            if (buf[i] != 0xff) {
+                good = 0;
+            }
+        }
+    }
+    if (good) {
+        print_str("OK\r\n");
+    } else {
+        print_str("FAILED!\r\n");
+    }
+
+    /* Program the first two pages of the erased sector. */
+    static const char test_message[2][16] = {
+        "Flash write test",
+        "Another testpage"
+    };
+    uint64_t testdata[2];
+    for (unsigned int page = 0; page < 2; page++) {
+        testdata[page] = get_cycle_counter();
+        memcpy(buf, test_message[page], 16);
+        for (unsigned int i = 0; i < 8; i++) {
+            buf[16 + i] = testdata[page] >> (i << 3);
+        }
+        uint32_t page_addr = sector_addr + page * page_size;
+        print_str("  Programming page at 0x");
+        print_uint_hex(page_addr, 6);
+        print_str(" ... ");
+        status = rvlib_spiflash_page_program(page_addr, buf, 24);
+        if (status < 0) {
+            print_str("ERROR code -");
+            print_uint(-status);
+            print_endln();
+        } else {
+            print_str("OK\r\n");
+        }
+    }
+
+    /* Read back the programmed pages. */
+    for (unsigned int page = 0; page < 2; page++) {
+        uint32_t page_addr = sector_addr + page * page_size;
+        print_str("  Reading back page at 0x");
+        print_uint_hex(page_addr, 6);
+        print_str(" ... ");
+        rvlib_spiflash_read_mem(page_addr, buf, sizeof(buf));
+        good = 1;
+        for (unsigned int i = 0; i < 16; i++) {
+            if (buf[i] != test_message[page][i]) {
+                good = 0;
+            }
+        }
+        for (unsigned int i = 0; i < 8; i++) {
+            if (buf[16 + i] != ((testdata[page] >> (i << 3)) & 0xff)) {
+                good = 0;
+            }
+        }
+        for (unsigned int i = 24; i < sizeof(buf); i++) {
+            if (buf[i] != 0xff) {
+                good = 0;
+            }
+        }
+        if (good) {
+            print_str("OK\r\n");
+        } else {
+            print_str("FAILED!\r\n");
+        }
+    }
+}
+
+
+/* Read data from SPI flash. */
+static int spiflash_read(uint32_t addr, uint32_t len)
+{
+    unsigned char buf[16];
+
+    print_str("Reading from SPI flash:\r\n");
+
+    rvlib_spiflash_init();
+
+    while (len > 0) {
+        size_t nbytes = (len > 16) ? 16 : len;
+        rvlib_spiflash_read_mem(addr, buf, nbytes);
+        print_uint_hex(addr, 8);
+        rvlib_putchar(':');
+        for (unsigned int i = 0; i < nbytes; i++) {
+            rvlib_putchar(' ');
+            print_uint_hex(buf[i], 2);
+        }
+        print_endln();
+        addr += nbytes;
+        len -= nbytes;
+    }
+
+    return 0;
+}
+
+
+/* Handle "spiflash ..." subcommand. */
+static int spiflash_subcommand(const char *cmdbuf)
+{
+    const char *pcmd = cmdbuf;
+
+    while (*pcmd == ' ') {
+        pcmd++;
+    }
+
+    if (*pcmd == '\0' || strncmp(pcmd, "help", 5) == 0) {
+        print_str(
+            "spiflash subcommands:\r\n"
+            "  spiflash readid             - Read flash device ID\r\n"
+            "  spiflash read <addr> <len>  - Read bytes from flash memory\r\n"
+            "  spiflash writetest          - Test program/erase functions\r\n"
+            "\r\n");
+        return 0;
+    }
+
+    if (strncmp(pcmd, "readid", 7) == 0) {
+        spiflash_readid();
+        return 0;
+    } else if (strncmp(pcmd, "read", 4) == 0) {
+        uint32_t addr, len;
+        pcmd += 4;
+        int ret = parse_uint(pcmd, &addr);
+        if (ret < 0) {
+            return ret;
+        }
+        pcmd += ret;
+        ret = parse_uint(pcmd, &len);
+        if (ret < 0) {
+            return ret;
+        }
+        return spiflash_read(addr, len);
+    } else if (strncmp(pcmd, "writetest", 10) == 0) {
+        spiflash_writetest();
+        return 0;
+    } else {
+        return -1;
+    }
+}
+
+
 void show_help(void)
 {
     print_str(
@@ -471,6 +738,7 @@ void show_help(void)
         "  setgpio{1|2} {0..31} {0|1|Z} - Set GPIO output pin state\r\n"
         "  testgpio                 - Test GPIO input/output\r\n"
         "  testmem                  - Test simple memory access\r\n"
+        "  spiflash ...             - SPI flash command\r\n"
         "  hexboot                  - Load and execute HEX file\r\n"
         "\r\n");
 }
@@ -519,6 +787,8 @@ void command_loop(void)
             test_gpio_inout();
         } else if (strncmp(cmdbuf, "testmem", sizeof(cmdbuf)) == 0) {
             test_mem_access();
+        } else if (strncmp(cmdbuf, "spiflash", 8) == 0) {
+            ret = spiflash_subcommand(cmdbuf + 8);
         } else if (strncmp(cmdbuf, "hexboot", sizeof(cmdbuf)) == 0) {
             do_hexboot();
         } else if (cmdbuf[0] != '\0') {
