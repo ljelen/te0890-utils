@@ -26,6 +26,7 @@
 
 static volatile int timer_count_interrupts;
 static volatile uint64_t timer_next_interrupt;
+static volatile int test_state = 0;
 
 
 static void print_str(const char *msg)
@@ -58,28 +59,6 @@ static void print_uint(unsigned int val)
         val /= 10;
     } while (val != 0);
     print_str(p);
-}
-
-
-/* Count timer interrupts. */
-void handle_timer_interrupt(void)
-{
-    timer_count_interrupts += 1;
-    rvlib_set_green_led(timer_count_interrupts & 1);
-    rvlib_timer_set_timecmp(timer_next_interrupt);
-}
-
-
-/* Print message on unexpected trap, then halt program. */
-void handle_unexpected_trap(uint32_t cause, uint32_t badaddr)
-{
-    rvlib_set_red_led(1);
-    print_str("detected trap: cause=0x");
-    print_hex(cause);
-    print_str(" badaddr=0x");
-    print_hex(badaddr);
-    print_str("\r\n");
-    _Exit(1);
 }
 
 
@@ -164,11 +143,14 @@ static void test_misaligned_data(void)
     // does not understand what we are doing.
     asm volatile ( "addi %0,%1,%2" : "=r" (badptr) : "r" (buf), "I" (offset) );
 
+    test_state = 1;
     print_str("\r\nNow going to trigger misaligned data access ...\r\n");
     uint32_t val = *badptr;
 
     print_hex(val);
+
     print_str(" hmm, somehow got past misaligned data access\r\n");
+    print_str("ERROR: no interrupt on misaligned data access\r\n");
 }
 
 
@@ -190,8 +172,57 @@ static void test_misaligned_branch(void)
                    : "=r" (badptr)
                    : "r" (&helper_misaligned_branch), "I" (offset) );
 
+    test_state = 3;
     print_str("\r\nNow going to trigger misaligned call ...\r\n");
     badptr();
+
+    print_str("ERROR: no interrupt on misaligned branch\r\n");
+}
+
+
+/* Test misaligned branch. */
+static void test_finished(void)
+{
+    print_str("\r\nTest finished.\r\n");
+    _Exit(0);
+}
+
+
+/* Count timer interrupts. */
+void handle_timer_interrupt(void)
+{
+    timer_count_interrupts += 1;
+    rvlib_set_green_led(timer_count_interrupts & 1);
+    rvlib_timer_set_timecmp(timer_next_interrupt);
+}
+
+
+/* Print message on unexpected trap, then halt program. */
+void handle_unexpected_trap(uint32_t cause, uint32_t badaddr)
+{
+    rvlib_set_red_led(1);
+    print_str("detected trap: cause=0x");
+    print_hex(cause);
+    print_str(" badaddr=0x");
+    print_hex(badaddr);
+    print_str("\r\n");
+
+    switch (test_state) {
+      case 1:
+        /* continue testing after trap on misaligned data access */
+        test_state = 2;
+        test_misaligned_branch();
+        break;
+      case 3:
+        /* finish test after trap on misaligned branch */
+        test_state = 4;
+        test_finished();
+	break;
+      default:
+        print_str("ERROR: this should not happen\r\n");
+    }
+
+    _Exit(1);
 }
 
 
@@ -208,7 +239,6 @@ int main(void)
 
     test_timer();
     test_misaligned_data();
-    test_misaligned_branch();
 
     return 0;
 }
