@@ -158,7 +158,7 @@ were designed by other people:
    See <https://github.com/SpinalHDL/VexRiscv/> for the original VexRiscv code.
 
  - Some of the software examples use PicoLibc.
-   PicoLibc is licensed under several variants of the BSD license.a
+   PicoLibc is licensed under several variants of the BSD license.
 
    See <https://github.com/picolibc/picolibc> for the PicoLibc source code.
 
