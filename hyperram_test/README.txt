@@ -1,4 +1,28 @@
 
+  WARNING: Data corruption
+  ------------------------
+
+This HyperRAM controller shows occasional data corruption.
+
+On my TE0890 board, a burst of errors occurs about once every 10 hours
+during intensive memory testing. The cause of these errors is unknown.
+
+For ISSI HyperRAM rev D devices, very high error rates have been reported
+that only occur for single-word bursts (burst length 1 or 2 bytes).
+These are most likely caused by silicon errata.
+
+ISSI HyperRAM revision D devices have errata describing malfunctioning
+single-word burst access in combination with variable latency.
+A possible workaround is to enable fixed latency by changing bit 3 of
+parameter "config0_data" from 0 to 1 in entity "hyperram_ctrl".
+I have not tested this.
+(based on errata document ISSI AN66WX001)
+
+Cypress HyperRAM revision B devices have errata describing intermittent
+errors in case of variable latency. A possible workaround is to enable
+fixed latency. I have not tested this.
+
+
   HyperRAM interface
   ==================
 
@@ -15,11 +39,6 @@ The HyperRAM interface core is designed to run only at 100 MHz.
 It will probably not work at other clock frequencies, or on other
 boards than the TE0890. The test design runs at 100 MHz from
 the on-board oscillator.
-
-WARNING: This design currently shows failures on my TE0890 board.
-It may run without errors for several hours, but produces bursts
-of errors typically about once every 10 hours.
-I'm desperately trying to find the cause of these failures.
 
 
   Test method
